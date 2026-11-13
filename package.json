@@ -1,0 +1,11 @@
+{
+  "name": "quiet-spaces",
+  "private": true,
+  "scripts": {
+    "test": "node tests/check.mjs && node tests/security.mjs && node tests/interactions.mjs && node tests/offline.mjs",
+    "test:browser": "node tests/browser.cjs"
+  },
+  "devDependencies": {
+    "playwright": "1.65.0"
+  }
+}

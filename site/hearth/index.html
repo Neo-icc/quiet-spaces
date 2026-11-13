@@ -1,0 +1,91 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>情绪壁炉</title><style>*{box-sizing:border-box}body{margin:0;background:#14100e;color:#f2d8be;font:14px 'Noto Serif SC',serif}main{height:100dvh;min-height:570px;position:relative;overflow:hidden;background:radial-gradient(ellipse at 50% 72%,#3d2017 0,#14100e 65%)}canvas{width:100%;height:100%;display:block}header,footer{position:absolute;left:5%;right:5%;display:flex;justify-content:space-between;align-items:center;gap:10px}header{top:22px}footer{bottom:22px;flex-wrap:wrap}button{color:inherit;background:transparent;border:1px solid #8a665344;padding:12px;min-height:44px;font:inherit;cursor:pointer}button:focus-visible{outline:2px solid #e07a3c}.center{position:absolute;left:5%;right:5%;top:18%;text-align:center;pointer-events:none}.center h1{font-size:23px;font-weight:400;letter-spacing:.2em}.center p{font-size:13px;color:#c8a995;line-height:2}.choices{position:absolute;bottom:17%;left:0;right:0;display:flex;justify-content:center;gap:12px}.choices button{font-size:22px;min-width:56px;pointer-events:auto}.hidden{display:none!important}.overlay{position:absolute;inset:0;background:#14100ef0;padding:15vh 9% 8%;overflow:auto;line-height:2.2}.overlay h2{font-weight:400}small{color:#a78c7a}#status{font-variant-numeric:tabular-nums}#glow{position:absolute;inset:0;pointer-events:none;box-shadow:inset 0 0 110px 18px #e07a3c22;transition:box-shadow 2s ease}#feedback{font-size:18px;line-height:2.2} @media(max-width:400px){header{left:3%;right:3%}header button{padding:6px;font-size:12px}.choices{gap:5px}}@media(prefers-reduced-motion:reduce){#glow{transition:none}}</style><main><div id="glow"></div><canvas id="fire" aria-label="持续变化的火焰"></canvas><header><span>情 绪 壁 炉</span><div><button id="mute">开启声音</button><button id="full">全屏</button><button id="mic" aria-pressed="false">启用麦克风</button><button id="privacy">隐私</button></div></header><div class="center"><h1 id="heading">火还没亮。</h1><p id="sub">选一个字，炉子就亮。</p><p id="status"></p></div><div class="choices" id="choices"><button data-mode="紧">紧</button><button data-mode="乱">乱</button><button data-mode="钝">钝</button><button data-mode="空">空</button></div><footer><button id="restart">再待一会</button><button id="records">来过的日子</button><small id="signal">信号：自评 · 不采集音视频</small></footer><section class="overlay hidden" id="panel"><h2 id="panelTitle"></h2><div id="panelBody"></div><button id="close">返回炉边</button></section></main><script>
+const $=id=>document.getElementById(id);const configs={'紧':{scene:'篝火',inhale:4,exhale:8,color:'#e07a3c',frequency:180},'乱':{scene:'远雷',inhale:4,exhale:7,color:'#d5d4cb',frequency:80},'钝':{scene:'潮汐',inhale:3,exhale:4,color:'#789e9c',frequency:240},'空':{scene:'雪夜',inhale:5,exhale:9,color:'#b7c6d4',frequency:330}};let mode=null,start=0,finished=false,ctx=null,osc=null,gain=null,muted=true,lastMove=performance.now(),dim=false;const sim=new URLSearchParams(location.search).get('sim')==='1';
+// Microphone is opt-in, analysed locally, and never recorded or transmitted.
+let micPending=false,micRequest=0;
+let micStream=null,micAnalyser=null,micData=null,micContext=null,micLevel=0,micStability=.8;
+async function stopMic(){
+  micRequest++;
+  micStream?.getTracks().forEach(track=>track.stop());micStream=null;
+  micAnalyser?.disconnect();micAnalyser=null;micData=null;
+  const context=micContext;micContext=null;
+  if(context&&context.state!=='closed')await context.close();
+  $('mic').textContent='启用麦克风';$('mic').setAttribute('aria-pressed','false');
+  $('signal').textContent=sim?'信号：模拟曲线（仅演示）':'信号：自评 · 不采集音视频';
+}
+$('mic').onclick=async()=>{
+ if(micPending)return;
+ if(micStream){await stopMic();return}
+ if(!navigator.mediaDevices?.getUserMedia){$('signal').textContent='此浏览器不支持麦克风，继续使用自评';return}
+ micPending=true;
+ const request=++micRequest;
+ try{
+  const stream=await navigator.mediaDevices.getUserMedia({audio:true,video:false});
+  if(request!==micRequest){stream.getTracks().forEach(track=>track.stop());return}
+  micStream=stream; // Own the stream immediately: later failures must stop its tracks.
+  micContext=new AudioContext();const source=micContext.createMediaStreamSource(stream);
+  micAnalyser=micContext.createAnalyser();micAnalyser.fftSize=1024;
+  source.connect(micAnalyser);micData=new Float32Array(micAnalyser.fftSize);
+  $('mic').textContent='关闭麦克风';$('mic').setAttribute('aria-pressed','true');
+  $('signal').textContent='信号：麦克风音量 · 仅本地分析';
+ }catch{if(request===micRequest){await stopMic();$('signal').textContent='未获麦克风权限，继续使用自评'}}
+ finally{micPending=false}
+};
+addEventListener('pagehide',()=>{void stopMic();stopSound()});
+function readMic(){
+ if(!micAnalyser||!micData)return;
+ micAnalyser.getFloatTimeDomainData(micData);
+ let sum=0;for(const value of micData)sum+=value*value;
+ const rms=Math.sqrt(sum/micData.length);
+ const change=Math.min(1,Math.abs(rms-micLevel)*16);
+ micLevel=.85*micLevel+.15*rms;
+ micStability=Math.max(.15,Math.min(.95,.9*micStability+.1*(1-change)));
+}
+let sessions=[];try{const raw=JSON.parse(localStorage.getItem('hearth-sessions')||'[]');sessions=Array.isArray(raw)?raw:[]}catch{}const lines={'紧':['火舌缩回去，又慢慢伸出来。','炉边的光，比刚才低了一点。','木纹里还留着一点暖色。','刚才的三分钟，火一直在。','火星落下时，屋里很静。','你看见了火光的起伏。','一段木头慢慢烧成了炭。','窗外没有新的声响。','炉边仍留着一小片亮。','这段火光停在这里。'],'乱':['火苗先向左，后来向右。','炉膛里有几声细小的响动。','刚才的光，曾经摇得很快。','远处的声响渐渐淡了。','火星绕了一个小圈。','炉边的影子换过几次方向。','一阵风经过，火没有灭。','刚才有一小段安静。','光在木纹上慢慢走过。','最后一颗火星还亮着。'],'钝':['炭火里有一道细细的红。','光慢慢落在炉沿上。','这段时间，木头一直很安静。','炉边留下了一点余温。','一声轻响之后，火还在。','火光照见了木头的纹路。','炉膛深处还有暗红色。','你坐着的时候，火走得很慢。','灰落下，没有发出声响。','今晚的光停在炉边。'],'空':['雪夜的窗边有一点亮。','火苗映在没有字的墙上。','这一会儿，屋里没有别的事。','风停过片刻，又来了。','炉沿上留着浅浅的光。','灰白的夜色还在窗外。','火星在暗处亮了一次。','这三分钟，窗外仍是夜。','炉子安静地亮着。','你离开后，光还会暗下去。']};function store(){localStorage.setItem('hearth-sessions',JSON.stringify(sessions))}function select(m){mode=m;start=Date.now();finished=false;dim=false;$('choices').classList.add('hidden');$('heading').textContent=configs[m].scene;$('sub').textContent='吸 '+configs[m].inhale+' 秒 · 呼 '+configs[m].exhale+' 秒';$('restart').textContent='重新开始';lastMove=performance.now();if(!muted)audio()}document.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>select(b.dataset.mode));$('restart').onclick=()=>{if(finished){mode=null;finished=false;stopSound();$('heading').textContent='火还没亮。';$('sub').textContent='选一个字。';$('restart').textContent='再待一会';$('choices').classList.remove('hidden')}else if(mode)select(mode);else $('choices').classList.remove('hidden')};function show(title,body){$('panelTitle').textContent=title;$('panelBody').innerHTML=body;$('panel').classList.remove('hidden')}function close(){$('panel').classList.add('hidden')} $('close').onclick=close;$('privacy').onclick=()=>show('留在这台设备','<p>默认只使用你选择的字。只有主动启用麦克风后才会读取音量变化；不录音、不上传，关闭后停止采集。记录保存在浏览器本地。</p><button id="clear">清除本地记录</button>');$('records').onclick=()=>show('来过的日子','<p>这个月来了 '+new Set(sessions.filter(x=>{const d=new Date(x.at),now=new Date();return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear()}).map(x=>x.at.slice(0,10))).size+' 天</p><p>记录 '+sessions.length+' 次</p><p>平均停留 '+(sessions.length?Math.round(sessions.reduce((a,x)=>a+x.seconds,0)/sessions.length):0)+' 秒</p>');$('panel').addEventListener('click',e=>{if(e.target.id==='clear'){sessions=[];store();show('记录已清除','<p>这台设备上的记录已清空。</p>')}});$('full').onclick=()=>{if(document.fullscreenElement)document.exitFullscreen?.();else document.documentElement.requestFullscreen?.()};$('mute').onclick=()=>{muted=!muted;$('mute').textContent=muted?'开启声音':'静音';if(muted){stopSound()}else audio()};// Four distinct, original procedural soundscapes. All sources share one output bus.
+let soundNodes=[],soundTimer=null;
+let fadeTimer=null;
+function stopSound(){
+ if(soundTimer){clearInterval(soundTimer);soundTimer=null}
+ for(const n of soundNodes){try{n.stop?.()}catch{}try{n.disconnect()}catch{}}
+ soundNodes=[];
+ if(fadeTimer){clearTimeout(fadeTimer);fadeTimer=null}
+ if(gain){gain.disconnect();gain=null}
+}
+function audio(){
+ if(!mode||muted||finished)return;
+ ctx??=new AudioContext();void ctx.resume();stopSound();
+ gain=ctx.createGain();gain.gain.value=0;gain.connect(ctx.destination);
+ gain.gain.setTargetAtTime(.075,ctx.currentTime,.6);
+ const tone=(freq,type='sine',volume=.08)=>{
+  const o=ctx.createOscillator(),v=ctx.createGain();o.type=type;o.frequency.value=freq;v.gain.value=volume;
+  o.connect(v).connect(gain);o.start();soundNodes.push(o,v);return o;
+ };
+ const noise=(filterFreq,filterType='lowpass',volume=.1)=>{
+  const buffer=ctx.createBuffer(1,ctx.sampleRate*2,ctx.sampleRate),d=buffer.getChannelData(0);
+  for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;
+  const src=ctx.createBufferSource(),f=ctx.createBiquadFilter(),v=ctx.createGain();
+  src.buffer=buffer;src.loop=true;f.type=filterType;f.frequency.value=filterFreq;v.gain.value=volume;
+  src.connect(f).connect(v).connect(gain);src.start();soundNodes.push(src,f,v);return {src,f,v};
+ };
+ if(mode==='紧'){
+  // Crackling logs: low filtered wind and sparse short crackle envelopes.
+  noise(240,'lowpass',.12);tone(75,'sine',.045);
+  soundTimer=setInterval(()=>{
+   if(muted||!ctx)return;const t=ctx.currentTime;
+   const o=ctx.createOscillator(),v=ctx.createGain();o.type='triangle';o.frequency.value=380+Math.random()*850;
+   v.gain.setValueAtTime(.0001,t);v.gain.exponentialRampToValueAtTime(.1,t+.008);v.gain.exponentialRampToValueAtTime(.0001,t+.09);
+   o.connect(v).connect(gain);o.start(t);o.stop(t+.1);o.onended=()=>{o.disconnect();v.disconnect()};
+  },420);
+ }else if(mode==='乱'){
+  // Distant thunder: slow filtered noise swells, never a sharp strike.
+  const {f,v}=noise(105,'lowpass',.05);tone(48,'sine',.06);
+  soundTimer=setInterval(()=>{const t=ctx.currentTime;f.frequency.setTargetAtTime(85+Math.random()*100,t,1.4);v.gain.setTargetAtTime(.03+Math.random()*.12,t,2)},2800);
+ }else if(mode==='钝'){
+  // Tides: broad noise rising and falling on a long envelope.
+  const {v}=noise(820,'lowpass',.05);tone(165,'sine',.018);
+  soundTimer=setInterval(()=>{const t=ctx.currentTime;v.gain.setTargetAtTime(.035+Math.random()*.18,t,2.2)},3500);
+ }else{
+  // Snow night: almost silent, with a pair of soft distant harmonic tones.
+  noise(400,'lowpass',.012);tone(220,'sine',.018);tone(330,'sine',.009);
+ }
+}
+const canvas=$('fire'),g=canvas.getContext('2d');let w=0,h=0,particles=[];function resize(){const d=Math.min(devicePixelRatio||1,2);w=canvas.clientWidth;h=canvas.clientHeight;canvas.width=Math.round(w*d);canvas.height=Math.round(h*d);g.setTransform(d,0,0,d,0,0)}addEventListener('resize',resize);resize();function frame(t){g.clearRect(0,0,w,h);const phase=mode?(Date.now()-start)/1000:0;const config=configs[mode];const elapsed=config?phase%(config.inhale+config.exhale):0;const progress=config?(elapsed<config.inhale?elapsed/config.inhale:1-(elapsed-config.inhale)/config.exhale):0;const breathe=config?.5-.5*Math.cos(Math.PI*progress):.2;readMic();const stability=micAnalyser?micStability:(sim?.45+.4*Math.sin(t/450):.8);const fade=finished?Math.max(0,1-(Date.now()-start-180000)/8000):1;const intensity=mode?.15+.75*fade:.15;const x=w/2,y=h*.78;let grad=g.createRadialGradient(x,y,2,x,y,Math.min(w*.55,300));grad.addColorStop(0,mode?configs[mode].color+'65':'#7a3b2e22');grad.addColorStop(1,'#14100e00');g.fillStyle=grad;g.fillRect(0,0,w,h);for(let i=0;i<38;i++){let k=i/38,noise=Math.sin(t*.002*(1+(1-stability)*3)+i*5.2)*12+Math.sin(t*.001+i)*10,spread=(1-k)*65;const fx=x+Math.sin(i*9.1)*spread+noise,fy=y-k*(90+intensity*150)*(0.7+.3*Math.sin(t*.001+i));g.beginPath();g.ellipse(fx,fy,Math.max(2,(1-k)*16),Math.max(4,(1-k)*25),0,0,Math.PI*2);g.fillStyle=(i%4===0?'#fff0d9':mode?configs[mode].color:'#7a3b2e')+Math.round((1-k)*intensity*130).toString(16).padStart(2,'0');g.fill()}$('glow').style.boxShadow='inset 0 0 '+Math.round(80+breathe*65)+'px 12px '+(mode?configs[mode].color:'#e07a3c')+(mode?'24':'08');if(mode&&!finished){let sec=Math.floor((Date.now()-start)/1000);$('status').textContent=String(Math.floor(Math.max(0,180-sec)/60)).padStart(2,'0')+':'+String(Math.max(0,180-sec)%60).padStart(2,'0');if(sec>=180){finished=true;if(gain&&ctx){gain.gain.setTargetAtTime(0,ctx.currentTime,2);fadeTimer=setTimeout(stopSound,8000)}sessions.push({at:new Date().toISOString(),mode,seconds:180});store();$('heading').textContent='火慢慢暗下去。';$('sub').textContent=lines[mode][Math.floor(Math.random()*10)];$('status').textContent=''}}if(t-lastMove>600000&&!dim){dim=true;canvas.style.opacity='.3'}requestAnimationFrame(frame)}requestAnimationFrame(frame);['pointerdown','keydown'].forEach(x=>addEventListener(x,()=>{lastMove=performance.now();dim=false;canvas.style.opacity='1'}));$('restart').textContent='再待一会';$('signal').textContent=sim?'信号：模拟曲线（仅演示）':'信号：自评 · 不采集音视频';</script></html>
