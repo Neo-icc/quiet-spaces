@@ -19,8 +19,8 @@ const server = http.createServer((req,res)=>{
   fs.createReadStream(file).pipe(res);
 });
 (async()=>{
-  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
-  const base = 'http://127.0.0.1:' + server.address().port + prefix;
+  if(!process.env.SITE_URL) await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  const base = process.env.SITE_URL ?? 'http://127.0.0.1:' + server.address().port + prefix;
   const browser = await chromium.launch({channel:process.env.BROWSER_CHANNEL || undefined,args:['--use-fake-device-for-media-stream','--use-fake-ui-for-media-stream']});
   try {
     for (const mobile of [false,true]) {
